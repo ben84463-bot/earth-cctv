@@ -128,6 +128,10 @@ body.dragging iframe{pointer-events:none}
 #geoRes .r .tag{font-size:11px;color:#000;background:var(--sel);border-radius:3px;padding:0 4px;margin-right:6px}
 #geoRes .info{padding:8px 12px;color:var(--muted);font-size:12px}
 .place-pin{width:22px;height:22px;border-radius:50% 50% 50% 0;background:#ff5d5d;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 6px #000a}
+.sall{display:flex;gap:6px;margin:2px 0 6px}.sall .btn{flex:1}
+.scat{border:1px solid var(--line,#ffffff1f);border-radius:6px;padding:4px 6px;margin-bottom:6px}
+.schd{display:flex;align-items:center;gap:6px;font-size:13px}.schd .sl{flex:1;min-width:0}.schd small{display:block;color:var(--muted);font-size:11px}
+.sexp{padding:1px 6px!important;font-size:11px!important}.sbody{margin:4px 0 0 18px;max-height:320px;overflow:auto}
 .srow{display:flex;align-items:flex-start;gap:6px;padding:3px 0;font-size:12px}
 .srow input{margin-top:2px}
 .srow .sl{flex:1;min-width:0}
@@ -486,13 +490,13 @@ for(const [k,label,cc,srcs,n] of WORLD_META)
   SRC["w_"+k]={label:`${label}`,note:srcs.slice(0,4).join("、")+(srcs.length>4?` 等 ${srcs.length} 個來源`:""),prefix:`w_${k}:`,cc,load:()=>worldRows(k)};
 const SRC_ORDER=["tpe","sfw","shw","sct",...WORLD_META.map(m=>"w_"+m[0])];     // 去重時的優先順序
 const srcData={}, srcState={};                        // key -> 統一後的資料、狀態
-// 來源勾選介面目前隱藏（SHOW_SRC_UI=false）：所有來源一律開啟，不讀取舊的勾選記錄。改成 true 即恢復勾選清單
-const SHOW_SRC_UI=false;
+// 來源勾選介面：分成政府公開鏡頭／Windy／YouTube／民間靜態快照四類，預設全部開啟（勾選結果記在瀏覽器）
+const SHOW_SRC_UI=true;
 if(SHOW_SRC_UI){ document.getElementById("srcHead").hidden=false; document.getElementById("srcList").hidden=false; }
-let srcOn={tpe:true,sfw:true,shw:true,sct:true}; WORLD_META.forEach(m=>srcOn["w_"+m[0]]=SHOW_SRC_UI?!["windy","snap","yt"].includes(m[0]):true);   // 非政府來源預設不顯示
+let srcOn={tpe:true,sfw:true,shw:true,sct:true}; WORLD_META.forEach(m=>srcOn["w_"+m[0]]=true);
 // 清除舊版留下的金鑰與快取（已移除這些來源）
 try{ ["cctv-tdx-key","cctv-tdx-cache","cctv-manual-thb","cctv-manual-cty","cctv-manual-fwy","cctv-src-on"].forEach(k=>localStorage.removeItem(k)); }catch(e){}
-if(SHOW_SRC_UI) try{ Object.assign(srcOn,JSON.parse(localStorage.getItem("globe-src-on3")||"{}")); }catch(e){}
+if(SHOW_SRC_UI) try{ Object.assign(srcOn,JSON.parse(localStorage.getItem("globe-src-on4")||"{}")); }catch(e){}
 const srcName=c=>(SRC[c.src]?.label||c.src)+(String(c.src).startsWith("w_")&&SRC[c.src]?.note?`（${SRC[c.src].note}）`:"")+(c.also?.length?`（亦見於：${c.also.map(k=>SRC[k]?.label||k).join("、")}）`:"");
 
 // 取得 JSON 或 XML（20 秒逾時）
@@ -569,24 +573,40 @@ function mergeAll(final){
   if(RT.routes?.length) rebuildList(false);
 }
 function setSrc(k,st,msg,n){ srcState[k]={st,msg,n}; renderSrcList(); }
+const SRC_CATS=[["gov","政府公開鏡頭"],["windy","Windy 網路攝影機"],["yt","YouTube 直播"],["snap","民間靜態快照"]];
+function srcCat(k){ return k==="w_windy"?"windy":k==="w_yt"?"yt":k==="w_snap"?"snap":"gov"; }
+let srcGovOpen=false;
+function setSrcOn(keys,val){
+  keys.forEach(k=>srcOn[k]=val);
+  try{localStorage.setItem("globe-src-on4",JSON.stringify(srcOn));}catch(e){}
+  const need=keys.filter(k=>val&&!srcData[k]&&SRC[k]?.load);
+  renderSrcList();
+  if(need.length) Promise.all(need.map(k=>loadOne(k,false))).then(()=>{ mergeAll(true); renderSrcList(); }); else mergeAll(true);
+}
+function srcRowHtml(k){
+  const S=SRC[k], st=srcState[k]||{}, cls=st.st==="err"?"err":st.st==="ok"?"ok":"";
+  const msg=st.st==="ok"?`${(st.n||0).toLocaleString()} 支${st.msg?"・"+st.msg:""}`:st.st==="load"?(st.msg||"讀取中…"):st.st==="err"?st.msg:st.st==="off"?st.msg:S.note;
+  return `<div class="srow"><input type="checkbox" data-k="${k}" ${srcOn[k]?"checked":""}>
+    <span class="sl">${esc(S.label)}<small class="${cls}">${esc(msg||"")}</small></span></div>`;
+}
 function renderSrcList(){
   const el=document.getElementById("srcList"); if(!el) return;
   const keys=[...SRC_ORDER.filter(k=>SRC[k]),...Object.keys(SRC).filter(k=>!SRC_ORDER.includes(k))];
-  el.innerHTML=keys.map(k=>{ const S=SRC[k], st=srcState[k]||{}, cls=st.st==="err"?"err":st.st==="ok"?"ok":"";
-    const msg=st.st==="ok"?`${(st.n||0).toLocaleString()} 支${st.msg?"・"+st.msg:""}`:st.st==="load"?(st.msg||"讀取中…"):st.st==="err"?st.msg:st.st==="off"?st.msg:S.note;
-    const man=st.st==="ok"&&st.manual;
-    const fix=S.url&&st.st==="err"?`<span class="fix">瀏覽器不允許本頁直接讀取。請改用手動方式（只需做一次，之後會自動沿用）：<br>
-        ① <a href="${esc(S.url)}" target="_blank" rel="noopener">開啟原始資料</a>，新分頁出現資料後按 Ctrl+S（Mac 為 ⌘+S）存檔<br>
-        ② <button data-imp="${k}">匯入這個檔案</button><br>
-        若新分頁顯示錯誤而不是資料，代表此來源網址已失效。</span>`
-      :S.url&&man?`<span class="fix" style="border-style:solid">使用 ${esc(st.manual)} 手動匯入的資料。鏡頭位置不常變動，建議每月更新一次：
-        <a href="${esc(S.url)}" target="_blank" rel="noopener">開啟原始資料</a><button data-imp="${k}">重新匯入</button></span>`:"";
-    return `<div class="srow"><input type="checkbox" data-k="${k}" ${srcOn[k]?"checked":""}>
-      <span class="sl">${esc(S.label)}<small class="${cls}">${esc(msg||"")}</small>${fix}</span></div>`; }).join("");
-  el.querySelectorAll("[data-imp]").forEach(b=>b.onclick=()=>importForSource(b.dataset.imp));
-  el.querySelectorAll("input[data-k]").forEach(i=>i.onchange=()=>{ srcOn[i.dataset.k]=i.checked;
-    try{localStorage.setItem("globe-src-on3",JSON.stringify(srcOn));}catch(e){}
-    if(i.checked&&!srcData[i.dataset.k]) loadOne(i.dataset.k,false).then(()=>mergeAll(true)); else mergeAll(true); });
+  const by={}; keys.forEach(k=>(by[srcCat(k)]=by[srcCat(k)]||[]).push(k));
+  const cnt=ks=>ks.reduce((a,k)=>a+(srcOn[k]&&srcState[k]?.st==="ok"?(srcState[k].n||0):0),0);
+  el.innerHTML=`<div class="sall"><button class="btn" data-all="1">全選</button><button class="btn" data-all="0">全不選</button></div>`+
+    SRC_CATS.filter(([c])=>by[c]).map(([c,lab])=>{ const ks=by[c], on=ks.filter(k=>srcOn[k]).length;
+      const loading=ks.some(k=>srcOn[k]&&srcState[k]?.st==="load");
+      const sub=c==="gov"?`${on}／${ks.length} 個來源・`:"";
+      return `<div class="scat"><div class="schd"><input type="checkbox" data-cat="${c}" ${on===ks.length?"checked":""} ${on&&on<ks.length?'data-mixed="1"':""}>
+        <span class="sl"><b>${lab}</b><small>${sub}${loading?"讀取中…":cnt(ks).toLocaleString()+" 支顯示中"}</small></span>
+        ${c==="gov"?`<button class="btn sexp" data-exp="1">${srcGovOpen?"收合 ▲":"各國 ▼"}</button>`:""}</div>
+        ${c==="gov"?`<div class="sbody" ${srcGovOpen?"":"hidden"}>${ks.map(srcRowHtml).join("")}</div>`:""}</div>`; }).join("");
+  el.querySelectorAll("input[data-mixed]").forEach(i=>i.indeterminate=true);
+  el.querySelectorAll("[data-all]").forEach(b=>b.onclick=()=>setSrcOn(keys,b.dataset.all==="1"));
+  el.querySelectorAll("input[data-cat]").forEach(i=>i.onchange=()=>setSrcOn(by[i.dataset.cat],i.checked));
+  el.querySelector("[data-exp]")?.addEventListener("click",()=>{ srcGovOpen=!srcGovOpen; renderSrcList(); });
+  el.querySelectorAll("input[data-k]").forEach(i=>i.onchange=()=>setSrcOn([i.dataset.k],i.checked));
 }
 async function loadOne(k,force){
   const S=SRC[k]; if(!S||!S.load) return;

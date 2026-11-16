@@ -68,6 +68,7 @@ aside section{flex:none}
 .tile .v{z-index:0}
 .tile .hit{position:absolute;inset:0;z-index:1;cursor:zoom-in}
 .tile .cap{z-index:3}
+.tile.live-embed .hit{display:none}
 .ytfb{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;text-decoration:none;background:#000}.ytfb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45}.ytfb span{position:relative;text-align:center;background:#c00d;padding:8px 14px;border-radius:8px;font-weight:600}.ytfb small{font-weight:400;font-size:11px}
 #shareBox{position:fixed;inset:0;background:#0008;z-index:9999;display:flex;align-items:center;justify-content:center}
 #shareBox .sb{background:var(--panel,#1b2230);color:inherit;border:1px solid #fff2;border-radius:10px;padding:14px;width:min(520px,92vw);display:flex;flex-direction:column;gap:6px;font-size:13px}
@@ -1088,7 +1089,7 @@ function mountPlayer(host,c){
   steps.push(["iframe", urls.find(isPage)||url]);
 
   let hls=null, el=null, timer=null, to=null, dead=false, i=-1, badge=null;
-  const clean=()=>{ clearTimeout(to); if(badge){badge.remove();badge=null;} if(timer){clearInterval(timer);timer=null;} if(hls){hls.destroy();hls=null;}
+  const clean=()=>{ clearTimeout(to); host.closest(".tile")?.classList.remove("live-embed"); if(badge){badge.remove();badge=null;} if(timer){clearInterval(timer);timer=null;} if(hls){hls.destroy();hls=null;}
     if(el){ el.onerror=el.onload=el.onplaying=null; if(el.tagName==="VIDEO"){el.pause();el.removeAttribute("src");el.load();} else el.src="about:blank"; el.remove(); el=null; } };
   const next=()=>{
     if(dead) return; clean(); i++;
@@ -1131,7 +1132,7 @@ function mountPlayer(host,c){
       let src=u; if(isYT&&/^https?:/.test(location.protocol)&&!/[?&]origin=/.test(u)) src+=(u.includes("?")?"&":"?")+"origin="+encodeURIComponent(location.origin);
       el.src=src; el.allow="autoplay; encrypted-media; fullscreen; picture-in-picture";
       el.setAttribute("scrolling","no"); el.className="embed";
-      host.prepend(el); hide();
+      host.prepend(el); hide(); host.closest(".tile")?.classList.add("live-embed");   // 讓滑鼠點擊直接進入播放器（如 YouTube「略過廣告」）
     }
   };
   next();

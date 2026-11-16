@@ -443,16 +443,23 @@ const CC_ZH={TW:"臺灣",JP:"日本",HK:"香港",ID:"印尼",TH:"泰國",US:"美
 const _dn=(()=>{ try{ return new Intl.DisplayNames(["zh-Hant-TW"],{type:"region"}); }catch(e){ return null; } })();
 const ccName=cc=>CC_ZH[cc]||(cc&&_dn?(()=>{ try{ return _dn.of(cc); }catch(e){ return cc; } })():cc)||"未知";
 let WORLD=null;
-async function worldData(){
-  if(WORLD) return WORLD;
-  const b64=document.getElementById("worlddata").textContent.trim();
-  const bin=Uint8Array.from(atob(b64),ch=>ch.charCodeAt(0));
-  if(!window.DecompressionStream) throw new Error("此瀏覽器不支援解壓縮，請改用新版 Chrome／Edge／Safari／Firefox");
-  const txt=await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
-  WORLD=JSON.parse(txt); return WORLD;
+let WORLD_P=null;
+function worldData(){   // 同時多個來源要資料時只解壓一次
+  if(WORLD) return Promise.resolve(WORLD);
+  if(WORLD_P) return WORLD_P;
+  WORLD_P=(async()=>{
+    const b64=document.getElementById("worlddata").textContent.trim();
+    if(!window.DecompressionStream) throw new Error("此瀏覽器不支援解壓縮，請改用新版 Chrome／Edge／Safari／Firefox");
+    const s=atob(b64), bin=new Uint8Array(s.length); for(let i=0;i<s.length;i++) bin[i]=s.charCodeAt(i);
+    const txt=await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+    WORLD=JSON.parse(txt); return WORLD;
+  })().finally(()=>{ WORLD_P=null; });
+  return WORLD_P;
 }
+let worldRelease=null;
 async function worldRows(k){
   const W=await worldData();
+  if(IS_MOBILE){ clearTimeout(worldRelease); worldRelease=setTimeout(()=>{ WORLD=null; },4000); }   // 手機：用完釋放解壓後的資料，需要時再解
   if(k==="windy"){ const rows=W.windy.map(([name,lat,lng,cc,id])=>({id:`w_windy:${id}`,name,lat,lng,road:"",
       stream:`https://imgproxy.windy.com/_/preview/plain/current/${id}/original.jpg?v=2`,
       alt:[`https://webcams.windy.com/webcams/public/embed/player/${id}/day?autoplay=1&loop=1`],preview:"",
@@ -493,10 +500,17 @@ const srcData={}, srcState={};                        // key -> 統一後的資�
 // 來源勾選介面：分成政府公開鏡頭／Windy／YouTube／民間靜態快照四類，預設全部開啟（勾選結果記在瀏覽器）
 const SHOW_SRC_UI=true;
 if(SHOW_SRC_UI){ document.getElementById("srcHead").hidden=false; document.getElementById("srcList").hidden=false; }
-let srcOn={tpe:true,sfw:true,shw:true,sct:true}; WORLD_META.forEach(m=>srcOn["w_"+m[0]]=true);
+// 手機記憶體有限：預設只載入臺灣，其他國家／類別由使用者勾選；若上次載入途中當掉，自動退回臺灣
+const IS_MOBILE=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&/Macintosh/.test(navigator.userAgent))||matchMedia("(max-width:820px)").matches;
+const SRC_KEY=IS_MOBILE?"globe-src-on4m":"globe-src-on4", MOBILE_WARN=40000;
+let srcOn={tpe:true,sfw:true,shw:true,sct:true}; WORLD_META.forEach(m=>srcOn["w_"+m[0]]=!IS_MOBILE);
+let crashedLast=false; try{ crashedLast=!!localStorage.getItem("globe-busy"); }catch(e){}
+function busy(on){ try{ on?localStorage.setItem("globe-busy",String(Date.now())):localStorage.removeItem("globe-busy"); }catch(e){} }
 // 清除舊版留下的金鑰與快取（已移除這些來源）
 try{ ["cctv-tdx-key","cctv-tdx-cache","cctv-manual-thb","cctv-manual-cty","cctv-manual-fwy","cctv-src-on"].forEach(k=>localStorage.removeItem(k)); }catch(e){}
-if(SHOW_SRC_UI) try{ Object.assign(srcOn,JSON.parse(localStorage.getItem("globe-src-on4")||"{}")); }catch(e){}
+if(SHOW_SRC_UI&&!(IS_MOBILE&&crashedLast)) try{ Object.assign(srcOn,JSON.parse(localStorage.getItem(SRC_KEY)||"{}")); }catch(e){}
+if(IS_MOBILE&&crashedLast){ try{ localStorage.removeItem(SRC_KEY); }catch(e){} busy(false);
+  setTimeout(()=>toast("上次開啟時手機記憶體不足，已改回只載入臺灣。其他國家可在「資料來源」勾選，建議一次少量開啟。"),1500); }
 const srcName=c=>(SRC[c.src]?.label||c.src)+(String(c.src).startsWith("w_")&&SRC[c.src]?.note?`（${SRC[c.src].note}）`:"")+(c.also?.length?`（亦見於：${c.also.map(k=>SRC[k]?.label||k).join("、")}）`:"");
 
 // 取得 JSON 或 XML（20 秒逾時）
@@ -578,10 +592,12 @@ function srcCat(k){ return k==="w_windy"?"windy":k==="w_yt"?"yt":k==="w_snap"?"s
 let srcGovOpen=false;
 function setSrcOn(keys,val){
   keys.forEach(k=>srcOn[k]=val);
-  try{localStorage.setItem("globe-src-on4",JSON.stringify(srcOn));}catch(e){}
+  if(IS_MOBILE&&val){ const n=Object.keys(srcOn).filter(k=>srcOn[k]).reduce((a,k)=>a+(srcState[k]?.n||(WORLD_META.find(m=>"w_"+m[0]===k)||[])[4]||0),0);
+    if(n>MOBILE_WARN) toast(`目前勾選約 ${Math.round(n/1000)} 千支鏡頭，手機記憶體可能不夠而重新載入；若發生，下次會自動改回只載入臺灣。`); }
+  try{localStorage.setItem(SRC_KEY,JSON.stringify(srcOn));}catch(e){}
   const need=keys.filter(k=>val&&!srcData[k]&&SRC[k]?.load);
   renderSrcList();
-  if(need.length) Promise.all(need.map(k=>loadOne(k,false))).then(()=>{ mergeAll(true); renderSrcList(); }); else mergeAll(true);
+  if(need.length){ busy(true); Promise.all(need.map(k=>loadOne(k,false))).then(()=>{ mergeAll(true); renderSrcList(); setTimeout(()=>busy(false),3000); }); } else mergeAll(true);
 }
 function srcRowHtml(k){
   const S=SRC[k], st=srcState[k]||{}, cls=st.st==="err"?"err":st.st==="ok"?"ok":"";
@@ -594,7 +610,7 @@ function renderSrcList(){
   const keys=[...SRC_ORDER.filter(k=>SRC[k]),...Object.keys(SRC).filter(k=>!SRC_ORDER.includes(k))];
   const by={}; keys.forEach(k=>(by[srcCat(k)]=by[srcCat(k)]||[]).push(k));
   const cnt=ks=>ks.reduce((a,k)=>a+(srcOn[k]&&srcState[k]?.st==="ok"?(srcState[k].n||0):0),0);
-  el.innerHTML=`<div class="sall"><button class="btn" data-all="1">全選</button><button class="btn" data-all="0">全不選</button></div>`+
+  el.innerHTML=(IS_MOBILE?`<div class="status" style="margin:0 0 6px;color:#ffb74d">手機版為避免記憶體不足，預設只載入臺灣。其他國家／類別請按需要勾選，建議總數在 4 萬支以內。</div>`:"")+`<div class="sall"><button class="btn" data-all="1">全選</button><button class="btn" data-all="0">全不選</button></div>`+
     SRC_CATS.filter(([c])=>by[c]).map(([c,lab])=>{ const ks=by[c], on=ks.filter(k=>srcOn[k]).length;
       const loading=ks.some(k=>srcOn[k]&&srcState[k]?.st==="load");
       const sub=c==="gov"?`${on}／${ks.length} 個來源・`:"";
@@ -634,9 +650,9 @@ function importForSource(k){
   inp.click();
 }
 async function loadAll(force){
-  setStatus("載入中…");
+  setStatus("載入中…"); busy(true);
   await Promise.allSettled(Object.keys(SRC).filter(k=>srcOn[k]).map(k=>loadOne(k,force)));
-  mergeAll(true);
+  mergeAll(true); setTimeout(()=>busy(false),3000);
   if(!cams.length) setStatus("所有來源都無法載入，請確認網路連線後按「重新載入」。",true);
 }
 function loadFromFile(f){
